@@ -62,10 +62,17 @@ int main()
 	using namespace coroparse;
 	using namespace tao::pegtl;
 
-	auto p = pp(2);
-	p.push_token("JS Bach");
-	p.push_token("G. Mahler!");
-	std::cout << p.result() << std::endl;
+	// auto p = pp(2);
+	// p.push_token("JS Bach");
+	// p.push_token("G. Mahler!");
+	// std::cout << p.result() << std::endl;
+
+	auto f = ffa(2);
+	// f.__dbg_print_coro_stack();
+	f.push_value("Js Bach");
+	f.push_value("Mahler");
+	f.result();
+	std::cout << f.result() << std::endl;
 
 	string_input in("error['low pressure',error['next err']]", "");
 	auto coro = ex::parse_error();

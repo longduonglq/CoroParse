@@ -8,8 +8,6 @@ namespace coroparse
 {
 	struct NextTokenT { };
 	inline extern NextTokenT NextToken = NextTokenT{ };
-	struct EndTokenT { };
-	inline extern EndTokenT EndToken = EndTokenT{ };
 
 	template< class T >
 	struct ParserProc
@@ -202,7 +200,7 @@ namespace coroparse
 	}
 
 	template< class R, class T >
-	struct Degenerator_
+	struct Degenerator
 	{
 		struct Promise;
 		using promise_type = Promise;
@@ -210,9 +208,9 @@ namespace coroparse
 
 		struct Promise
 		{
-			Degenerator_<R, T> get_return_object()
+			Degenerator<R, T> get_return_object()
 			{
-				return Degenerator_<R, T>{ CoroHandle::from_promise(*this) };
+				return Degenerator<R, T>{ CoroHandle::from_promise(*this) };
 			}
 			void unhandled_exception() { ex_ptr = std::current_exception(); }
 			void return_value(R&& ret_) { ret = std::forward<R>(ret_); }
@@ -252,17 +250,15 @@ namespace coroparse
 				bool await_ready() noexcept { return false; }
 				bool await_suspend( CoroHandle dying_coro ) noexcept
 				{
-					return true; 
+					Promise& parent_promise = *dying_coro.promise().parent_promise;
+					parent_promise.get_base()->top_stack_or_base = std::addressof(parent_promise);
+					return false; 
 				}
 				auto await_resume() noexcept
 				{
 				}
 			};
-			auto final_suspend() noexcept 
-			{ 
-				// return FinalAwaitable { }; 
-				return std::suspend_always { };
-			}
+			auto final_suspend() noexcept { return FinalAwaitable { }; }
 
 			bool done() { return CoroHandle::from_promise(*this).done(); }
 			void resume() { return CoroHandle::from_promise(*this).resume(); }
@@ -308,7 +304,7 @@ namespace coroparse
 					return self_promise->result();
 				}
 			};
-			auto await_transform(Degenerator_<R, T>&& dg)
+			auto await_transform(Degenerator<R, T>&& dg)
 			{
 				Promise& child_promise = dg.coro_handle.promise();
 				child_promise.parent_promise = this;
@@ -357,10 +353,6 @@ namespace coroparse
 
 		void seek_accepting_state()
 		{
-			while (!coro_handle.promise().get_top()->expecting_token
-				&& !coro_handle.promise().get_top()->done())
-			{
-			}
 		}
 
 		auto push_value(T& value)
@@ -376,12 +368,12 @@ namespace coroparse
 			return coro_handle.promise().result();
 		}
 
-		Degenerator_(CoroHandle coro) : coro_handle { coro } 
+		Degenerator(CoroHandle coro) : coro_handle { coro } 
 		{
 			coro_handle.promise().parent_promise = nullptr;
 			coro_handle.promise().top_stack_or_base = std::addressof(coro_handle.promise());
 		}
-		~Degenerator_() { if (coro_handle) coro_handle.destroy(); }
+		~Degenerator() { if (coro_handle) coro_handle.destroy(); }
 
 
 		void move_past_initial_suspend()
@@ -405,7 +397,7 @@ namespace coroparse
 		bool moved_past_initial_suspend = false;
 	};
 
-	Degenerator_<int, const std::string_view> ff(int a)
+	Degenerator<int, const std::string_view> ff(int a)
 	{
 		if (a == 0)
 		{
@@ -422,197 +414,6 @@ namespace coroparse
 		{
 			std::cout << "Descend: " << a << std::endl;
 			auto r = co_await ff(a - 1);
-			auto tk = co_await NextTokenT{};
-			if (tk) std::cout << "In parser_proc: " << *tk << std::endl;
-			std::cout << "Ret val: " << r << std::endl;
-		}
-
-		co_return 100;
-	}
-
-
-
-	template < class R, class T >
-	struct Degenerator
-	{
-		struct Promise
-		{
-			using CoroHandle = std::coroutine_handle< Promise >;
-			Degenerator< R, T > get_return_object()
-			{
-				return Degenerator<R, T>{ CoroHandle::from_promise(*this) };
-			}
-			void unhandled_exception() { eptr = std::current_exception(); }
-			void return_value(R&& ret_) { ret = std::forward<R>(ret_); }
-
-			bool done() { return CoroHandle::from_promise(*this).done(); }
-			void resume() { return CoroHandle::from_promise(*this).resume(); }
-
-			// If self is base, the behavior is undefined.
-			Promise*& get_top_non_base() { return base_or_top->base_or_top; }
-			Promise*& get_top_as_base() { return base_or_top; }
-			Promise*& get_base() { return base_or_top; }
-			bool is_base() 
-			{ 
-				return !prev;
-			}
-
-			auto initial_suspend() noexcept { return std::suspend_always{ }; }
-			struct FinalAwaitable
-			{
-				bool await_ready() noexcept { return false; }
-				bool await_suspend(CoroHandle dying_coro) noexcept
-				{
-					// Final suspend of the last frame.
-					if (dying_coro.promise().prev == nullptr) return true; 
-
-					Promise& parent_promise = *dying_coro.promise().prev;
-					if (parent_promise.is_base())
-						parent_promise.get_top_as_base() = std::addressof(parent_promise);
-					else
-						parent_promise.get_top_non_base() = std::addressof(parent_promise);
-					return true;
-				}
-				auto await_resume() noexcept
-				{
-				}
-			};
-			auto final_suspend() noexcept { return FinalAwaitable { }; }
-
-			auto await_transform(Degenerator<R, T>&& dg)
-			{
-				Promise& child_promise = dg.handle.promise();
-				child_promise.prev = this;
-				child_promise.get_base() = this->get_base(); // Should be pointing to base here.
-				child_promise.get_base()->get_top_as_base() = std::addressof(child_promise);
-			
-				struct Awaitable
-				{
-					Promise* promise = nullptr;
-					bool await_ready() { return false; }
-					bool await_suspend(CoroHandle) { return true; }
-					auto await_resume() { return promise->result(); }
-				};
-				return Awaitable{ std::addressof(dg.handle.promise()) };
-			}
-
-			auto await_transform(NextTokenT)
-			{
-				struct NextTokenAwaitable
-				{
-					Promise* promise = nullptr;
-					bool await_ready() { return false; }
-					void await_suspend(CoroHandle coro)
-					{
-						promise = std::addressof(coro.promise());
-						promise->is_expecting_token = true;
-						promise->token = nullptr;
-					}
-					auto await_resume()
-					{
-						promise->is_expecting_token = false;
-						return std::exchange(promise->token, nullptr);
-					}
-				};
-				return NextTokenAwaitable{ };
-			}
-
-			auto result()
-			{
-				if (eptr) std::rethrow_exception(eptr);
-				return ret;
-			}
-
-			bool is_expecting_token = false;
-		protected:
-			friend struct Degenerator;
-
-			Promise* prev = nullptr; // Points to previous stack frame. For base, this points to nullptr For base, this points to nullptr.
-			// For the base, this points to `top`.
-			// For everything else, this field points to base.
-			// Thus, for non-base, the top can be get at via base_or_top->base_or_top.
-			Promise* base_or_top = nullptr; 
-
-			T* token = nullptr;
-			std::exception_ptr eptr = nullptr;
-			R ret;
-		};
-
-		using promise_type = Promise;
-		using CoroHandle = std::coroutine_handle< promise_type >;
-
-		Promise* seek_accepting_state()
-		{
-			Promise* top_promise = handle.promise().get_top_as_base();
-			// Could have been resumed and thus done by now so must check
-			// if (!top_promise->prev && top_promise->done()) return nullptr;
-			while (top_promise && !top_promise->is_expecting_token)
-			{
-				if (!top_promise->done())
-				{
-					top_promise->resume();
-					top_promise = handle.promise().get_top_as_base();
-				}
-				else
-				{
-					top_promise = top_promise->prev;
-				}
-			}
-			return top_promise;
-		}
-
-		void push_value(T& value)
-		{
-			Promise* acceptor = seek_accepting_state();
-			acceptor->token = std::addressof(value);
-			acceptor->resume();
-		}
-		void push_value(EndTokenT)
-		{
-			Promise* acceptor = seek_accepting_state();
-			do 
-			{ 
-				if (!acceptor) break;
-				acceptor->token = nullptr;
-				acceptor->resume();
-				acceptor = seek_accepting_state(); 
-			} 
-			while (acceptor);
-		}
-
-		R result() 
-		{ 
-			push_value(EndToken);
-			return handle.promise().result(); 
-		}
-
-		Degenerator(CoroHandle handle_) : handle { handle_ } 
-		{
-			handle.promise().prev = nullptr;
-			handle.promise().base_or_top = std::addressof(handle.promise());
-		}
-		~Degenerator() { if (handle) handle.destroy(); }
-	protected:
-		CoroHandle handle = nullptr;
-	};
-
-	Degenerator<int, const std::string_view> ffa(int a)
-	{
-		if (a == 0)
-		{
-			std::cout << "In recursion: " << a << std::endl;
-
-			auto tk = co_await NextTokenT{};
-			std::cout << "In parser_proc: " << *tk << std::endl;
-			auto tk1 = co_await NextTokenT{};
-			std::cout << "In parser_proc: " << *tk1 << std::endl;
-			
-			co_return 1;
-		}
-		else
-		{
-			std::cout << "Descend: " << a << std::endl;
-			auto r = co_await ffa(a - 1);
 			auto tk = co_await NextTokenT{};
 			if (tk) std::cout << "In parser_proc: " << *tk << std::endl;
 			std::cout << "Ret val: " << r << std::endl;
