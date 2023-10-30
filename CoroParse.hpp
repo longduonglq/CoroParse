@@ -545,7 +545,7 @@ namespace coroparse
 		{
 			Promise* top_promise = handle.promise().get_top_as_base();
 			// Could have been resumed and thus done by now so must check
-			// if (!top_promise->prev && top_promise->done()) return nullptr;
+			if (!top_promise->prev && top_promise->done()) return nullptr;
 			while (top_promise && !top_promise->is_expecting_token)
 			{
 				if (!top_promise->done())
@@ -604,8 +604,8 @@ namespace coroparse
 
 			auto tk = co_await NextTokenT{};
 			std::cout << "In parser_proc: " << *tk << std::endl;
-			auto tk1 = co_await NextTokenT{};
-			std::cout << "In parser_proc: " << *tk1 << std::endl;
+			// auto tk1 = co_await NextTokenT{};
+			// std::cout << "In parser_proc: " << *tk1 << std::endl;
 			
 			co_return 1;
 		}
